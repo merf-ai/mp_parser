@@ -105,13 +105,14 @@ def file_test_layout_prepare(responce4,MAIN_SESSION,tests_name_and_links,responc
         if event =='back':
             WINDOW.close()
             tests_layout_prepare(tests_name_and_links,responce2,MAIN_SESSION,all_courses)
+            return
         if event=='take_file':
             responce5,sesskey=programm.attempt_page_open(responce4,MAIN_SESSION)
             if len(values['file_url'])==0:
                 WINDOW.close()
                 file_test_layout_prepare(responce4,MAIN_SESSION,tests_name_and_links,responce2,all_courses,visible_file_error=True)
             programm.answer_on_questions(responce5,sesskey,values['file_url'],MAIN_SESSION)
-            file_test_layout_prepare(responce4,MAIN_SESSION,tests_name_and_links,responce2,all_courses,visible_file_error=False,process_complete=True)
+            
 
 
 login_layout_prepare()
