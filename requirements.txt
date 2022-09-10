@@ -1,0 +1,4 @@
+PySimpleGUI
+requests 
+beautifulsoup4  
+clipboard

@@ -1,0 +1,270 @@
+﻿'''Вход на сайт Мосполитех СДО'''
+
+from bs4 import BeautifulSoup 
+import requests
+
+
+def test_check_img(soup):
+    '''Проверяет какой раздел по картинке и возвращает список тестов'''
+    return list(filter(lambda x:'quiz' in x.find('img')['src'],soup.find_all('a',class_='aalink')))
+
+
+def test_check_span(soup):
+    ''''Проверяет тест или нет по слову в span'''   
+    return list(filter(lambda x:'тест' in x.find('span',class_='instancename').text.lower(),soup.find_all('a',class_='aalink')))
+ 
+
+def input_type_check(form,sequencecheck_name):
+    ''''Проверка типа заполняемой формы и выдача заполняемых форм данного типа,сначала из формы выбираются теги с именем,
+    затем при помощи цикла находим тег с типом формы,а потом с помощью следующего 
+    цикла находятся остальные теги с аналогичным типом,возвращается сами,которые
+    необходим заполнить и тип данных тегов'''
+    q=sequencecheck_name.split(':')[0]
+    form_result=[]
+    types={'p':'select','answer':'input(text,radio)','sub':'ul,select','response':'ul'}           
+    form_answer=list(filter(lambda x:x.get('name') is not None,form.find_all()))
+    type_form=''
+    for a in form_answer:       
+        for b in types:
+            if set(q+b)<set(a['name']):
+                type_form=b
+    for a in form_answer: 
+        if set(a['name'])>set(type_form+q) : 
+            form_result.append(a)
+    #forms_answer=filter(lambda x:q in x.get('name'),list(forms_answer))
+    return form_result,type_form
+
+def question_find_radio(form):
+    form_answer=form.find('div',class_='formulation clearfix').find('div',class_='answer')
+    divs_radio=form_answer.find_all('div')
+    answer_dict={}
+    for tag in divs_radio:
+        tag_value=tag.find_next().get('value')
+        if tag_value is None :
+            continue
+        tag_answer =tag.find_next().find_next().text
+        if tag.find_next().find_next().name=='div':
+            tag_answer=' '.join(tag_answer.split()[1:])     
+        answer_dict[tag_answer]=tag_value
+    return answer_dict
+
+
+def test_find(form_tag,ses):
+    ''''Находит все тесты в любом из курсов,в form необходимо вставить форму ответа от запроса на переход к опредедённому курсу,
+    в поле ses сессию,которая отвечает за переход по страницам и имеет все необъодимые куки
+    в поле url,страница,на которую осушествляется переход'''
+    tests_on_page=test_check_img(form_tag)
+    titles_h3=form_tag.find_all('h3',class_='section-title')
+    urls=list(map(lambda x:x.find_next('a')['href'],titles_h3))
+    for url in urls:
+        arr_url=url.split('?')[1]
+        param_url=arr_url.split('&')
+        datas={
+            'id':param_url[0].split('=')[1],
+            'section':param_url[1].split('=')[1]
+        }
+        res=ses.post(url,headers=header,data=datas)
+        tests_on_page.extend(test_check_img(BeautifulSoup(res.text,'html.parser')))
+    return dict(zip(list(map(lambda x:x.find('span',class_='instancename').text,tests_on_page)),list(map(lambda x:x['href'],tests_on_page))))
+
+
+def file_record(file_name,text_record):
+    '''Запись HTML в файл'''
+    with open(file_name,'w',encoding='UTF-8') as F:
+        F.writelines(text_record.split('/n'))
+        return F
+
+
+def cours_page_open(responce_form,session):
+    ''''Переход в необходимый курс'''
+    soup_page_courses=BeautifulSoup(responce_form.text,'html.parser')
+    all_courses=list(map(lambda x:x.find('div').find('a'),soup_page_courses.find('ul',class_='unlist').find_all('li')))
+    cours=all_courses[-1]
+    datas={
+        'id':cours['href'].split('=')[1]
+    }
+    responce3=session.post(cours['href'],data=datas,headers=header)
+    soup_for_courses=BeautifulSoup(responce3.text,'html.parser')
+    #test_links=test_check_img(soup_for_courses) test_names_and_links=dict(zip(list(map(lambda x:x.find('span',class_='instancename').text,test_links)),list(map(lambda x:x['href'],test_links))))-раньше так находил тесты,но способ не работает,там где пристутствуют разделы,например английский язык 
+    test_names_and_links=test_find(soup_for_courses,s2)
+    F=file_record('MP_cours.txt',responce3.text)
+    return test_names_and_links
+
+def attempt_page_open(responce,ses):
+    '''Переход на страницу попытки'''
+    access="Y"
+    soup_attempt=BeautifulSoup(responce.text,'html.parser')
+    attempt_form=soup_attempt.find('div',class_='box py-3 quizattempt').find('div',class_='singlebutton quizstartbuttondiv').find('form')
+    sesskey=attempt_form.find('input').find_next()['value']
+    data_for_attempt={
+        "cmid":attempt_form.find_next('input')['value'],
+        'sesskey':sesskey
+    }    
+    warning_form=soup_attempt.select_one('input[name="_qf__mod_quiz_preflight_check_form"]')
+    if (warning_form is not None) and (warning_form.get('value')=="1"):
+        access=input('Данный тест имеет ограничение по времени,вы уверены,что хотите начать?,введите Y,если да')
+        data_for_attempt.update({
+            '_qf__mod_quiz_preflight_check_form':'1',
+            'submitbutton':'Начать попытку'
+        })  
+    if access=='Y':     
+        responce5=ses.post(attempt_form['action'],headers=header,data=data_for_attempt)
+        F=file_record('MP_attempt.txt',responce5.text)
+    return responce5,F,sesskey
+
+def test_page_open(test_name,all_test_dict,session):
+    test=all_test_dict[test_name]
+    data_test={
+        'id':test.split('=')[1]
+    }
+    responce4=session.post(test,data=data_test,headers=header)
+    F=file_record('MP_test.txt',responce4.text)
+    return responce4
+
+
+def type_check_beta(form,sequencecheck_name):
+    ''''Проверка типа заполняемой формы'''
+    q=sequencecheck_name.split(':')[0]
+    types={'p':'select','answer':'input(text,radio)','sub':'ul,select','response':'сложить слово,переложить слова в нужном порядка'}           
+    form_answer=list(filter(lambda x:x.get('name') is not None,form.find_all()))
+    type_form=''
+    for a in form_answer:       
+        for b in types:
+            if (set(q+b)<set(a['name'])):
+                if a.name=='input': 
+                    type_form=f'{a.name}_{b}_{a["type"]}'
+                else:
+                    type_form=f'{a.name}_{b}'
+                break
+    return type_form
+
+
+def find_answer_text_radio(form_content,sequencecheck_name):
+    ''''Находит ответ в форме,если она radio кнопка,для файла с ответами'''
+    form_answer=form_content.find('div',class_='answer')
+    answer_form=list(filter(lambda x:'correct' in x['class'],form_answer.find_all('div')))
+    answer=''
+    if len(answer_form)>0:
+        answer=answer_form[0].find_next().find_next().text
+        if answer_form[0].name=='div':
+            answer=' '.join(answer.split()[1:])
+    return answer
+    
+
+def file_answer_scanner(file_path):
+    ''''Берёт ответы на вопросы из файла'''
+    all_type_dict={'select_p':{},'input_answer_text':{},'input_answer_radio':{},
+    'sub_ul':{},'sub_select':{},'responce__ul':{}}
+    with open(file_path,'r',encoding='UTF-8') as F:
+        soup_answer_html_radio=BeautifulSoup(F.read(),'html.parser')
+        #form_content=soup_answer_html_radio('div',class_='content')
+        answer_forms=soup_answer_html_radio.find_all('div',class_='formulation clearfix')
+        sequencecheck=answer_forms[0].find('input')['name']
+        for tag in answer_forms:
+            tag_question_text=tag.find('div',class_='qtext').text
+            type_tag=type_check_beta(tag,sequencecheck)
+            answer=find_answer_text_radio(tag,sequencecheck)
+            if (bool(answer)) and (type_tag=='input_answer_radio'):
+                all_type_dict[type_tag].setdefault(' '.join(tag_question_text.split()),[]).append(answer)
+    return all_type_dict
+
+header={
+    'User-Agent':'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36', 
+}
+''''responce отвечает за получение logintoken'''
+s=requests.Session()
+responce=s.post('https://online.mospolytech.ru/login/index.php')
+
+F=file_record('MPlog.txt',responce.text)
+soup = BeautifulSoup(responce.text, 'html.parser')
+logintoken=soup.find('div',class_='submit-wrapper').find_all('input')[1]['value']
+s.close
+
+''''responce2 отвечает за вход на сайт'''
+s2=requests.Session()
+cookie_dict=[
+    {'domain':key.domain,'name':key.name,'path':key.path,'value':key.value}
+    for key in responce.cookies
+]
+for k in cookie_dict:
+    s2.cookies.set(**k)
+
+datas={
+    'username':'nik.bolshakov.14@bk.ru',
+    'password':'A01082002z',
+    'logintoken':logintoken
+}
+responce2=s2.post('https://online.mospolytech.ru/login/index.php',headers=header,data=datas)
+
+
+F=file_record('MPlog_1.txt',responce2.text)
+
+
+''''Переход в необходимый курс'''
+
+test_names_and_links=cours_page_open(responce2,s2)
+
+''''Выбор необходимого теста и переход на страницу с ним'''
+
+responce4=test_page_open('тест по теме 1  Введение в  управление проектами',test_names_and_links,s2)
+
+''''Переход на страницу попытки'''
+
+responce5,F,sesskey=attempt_page_open(responce4,s2)
+
+
+'''Проход по страничкам теста и ответы на вопросы'''
+soup_attempt_answer=BeautifulSoup(responce5.text,'html.parser')
+form_answer=soup_attempt_answer.find('form',id='responseform')
+form_clearfix=form_answer.find('div',class_='formulation clearfix')
+sequencecheck_input=form_clearfix.find('input')
+pages_num=len(soup_attempt_answer.find('div',class_='qn_buttons clearfix multipages').find_all('a'))
+attempt=form_answer.select_one('input[name="attempt"]')
+
+'''Получаем данные из файла'''
+all_type_answer_dict=file_answer_scanner('тест по теме 1 ошибка.html')
+
+for a in range(1,pages_num):
+    form_clearfix=form_answer.find('div',class_='formulation clearfix')
+    scrollpos=form_answer.select_one('input[name="scrollpos"]')['value']
+    slots=form_answer.select_one('input[name="slots"]')
+    this_page=form_answer.select_one('input[name="thispage"]')['value']
+    next_page=str(int(this_page)+1)
+    sequencecheck=form_answer.find('div',class_='formulation clearfix').find('input')
+    q=sequencecheck['name'].split('_')[0]
+    form_type=type_check_beta(form_clearfix,sequencecheck['name'])
+    qvalue='-1'
+    if form_type=='input_answer_radio':
+        question_dict=question_find_radio(form_answer)
+        qtext=' '.join(form_clearfix.find('div',class_='qtext').text.split())
+        for a in all_type_answer_dict['input_answer_radio']:
+            if a==qtext:
+                for b in all_type_answer_dict['input_answer_radio'][a]:
+                    for c in question_dict:
+                        if c==b:
+                            qvalue=question_dict[c]
+        datas={
+        f'{q}_:flagged':'0',
+        f'{q}_:flagged':'0',
+        sequencecheck['name']:sequencecheck['value'],
+        f'{q}_answer':qvalue,
+        'next':'Следующая страница',
+        'attempt': attempt['value'],
+        'thispage': this_page,
+        'nextpage': next_page,
+        'timeup': '0',
+        'sesskey':sesskey,
+        'scrollpos':scrollpos ,
+        'slots': slots['value']
+        }
+
+    responce_answer=s2.post(form_answer['action'],headers=header,data=datas)
+    F=open('MP_q1.txt','w',encoding='UTF-8')
+    F.writelines(responce_answer.text.split('/n'))
+    F.close()
+    soup_attempt_answer=BeautifulSoup(responce_answer.text,'html.parser')
+    form_answer=soup_attempt_answer.find('form',id='responseform')
+
+
+
+
